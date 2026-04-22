@@ -1,0 +1,715 @@
+openapi: 3.0.0
+info:
+  title: Safe Driving Gamified Insurance App API
+  description: API specification for the Minimum Viable Product (MVP) of the Safe Driving Gamified Insurance App. This API supports user authentication, trip data ingestion, driving score calculation, gamification, and premium savings simulation. It is designed for high performance and low latency, especially for driver-facing dashboard queries [1] [2] [3].
+  version: 1.0.0
+servers:
+  - url: https://api.safedrive.com/v1
+    description: Production server
+  - url: https://staging.safedrive.com/v1
+    description: Staging server
+tags:
+  - name: Authentication
+    description: User registration, login, and session management
+  - name: User Profile
+    description: User profile management and preferences
+  - name: Trips
+    description: Managing driving trips and telemetry data
+  - name: Scoring
+    description: Driving score and event breakdown
+  - name: Rewards
+    description: Gamification elements like points, streaks, and missions
+  - name: Savings Simulator
+    description: Modeled premium savings projections
+  - name: Dashboard
+    description: Driver dashboard data retrieval
+paths:
+  /auth/signup:
+    post:
+      tags:
+        - Authentication
+      summary: Register a new user account
+      description: Allows a new user to create an account with email and password.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  example: StrongPassword123!
+      responses:
+        '201':
+          description: User successfully registered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: User registered successfully
+                  userId:
+                    type: string
+                    format: uuid
+                    example: a1b2c3d4-e5f6-7890-1234-567890abcdef
+        '400':
+          description: Invalid input
+        '409':
+          description: Email already registered
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Log in user and get authentication token
+      description: Authenticates a user and returns an access token for subsequent API calls.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  example: StrongPassword123!
+      responses:
+        '200':
+          description: User successfully logged in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  tokenType:
+                    type: string
+                    example: Bearer
+                  expiresIn:
+                    type: integer
+                    example: 3600
+        '401':
+          description: Invalid credentials
+  /auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Log out user
+      description: Invalidates the user's current session token.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User successfully logged out
+        '401':
+          description: Unauthorized
+  /me:
+    get:
+      tags:
+        - User Profile
+      summary: Get current user profile
+      description: Retrieves the profile information for the authenticated user.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          description: Unauthorized
+  /trips:
+    post:
+      tags:
+        - Trips
+      summary: Start a new driving trip
+      description: Initiates a new trip session for the authenticated user.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                startTime:
+                  type: string
+                  format: date-time
+                  example: '2026-04-21T10:00:00Z'
+                startLocation:
+                  type: object
+                  properties:
+                    latitude:
+                      type: number
+                      format: float
+                      example: 34.0522
+                    longitude:
+                      type: number
+                      format: float
+                      example: -118.2437
+      responses:
+        '201':
+          description: Trip started successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tripId:
+                    type: string
+                    format: uuid
+                    example: f1e2d3c4-b5a6-9876-5432-10fedcba9876
+        '401':
+          description: Unauthorized
+    get:
+      tags:
+        - Trips
+      summary: Get list of recent trips
+      description: Retrieves a paginated list of the authenticated user's recent driving trips.
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 10
+          description: Maximum number of trips to return
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            default: 0
+          description: Number of trips to skip for pagination
+      responses:
+        '200':
+          description: List of trips retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TripSummary'
+        '401':
+          description: Unauthorized
+  /trips/{tripId}/telemetry:
+    post:
+      tags:
+        - Trips
+      summary: Upload telemetry data for a trip
+      description: Uploads a batch of sensor telemetry data for an ongoing trip. Supports idempotent uploads and buffering [1].
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tripId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The ID of the trip to upload telemetry for
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - batchId
+                - telemetryData
+              properties:
+                batchId:
+                  type: string
+                  format: uuid
+                  description: Unique identifier for this telemetry batch to ensure idempotency
+                  example: b1c2d3e4-f5a6-7890-1234-567890abcdef
+                telemetryData:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/TelemetrySample'
+      responses:
+        '202':
+          description: Telemetry data accepted for processing
+        '400':
+          description: Invalid telemetry data or batchId
+        '401':
+          description: Unauthorized
+        '404':
+          description: Trip not found
+  /trips/{tripId}/complete:
+    post:
+      tags:
+        - Trips
+      summary: Complete a driving trip
+      description: Marks a trip as completed and triggers the scoring process. Supports idempotent completion [1].
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tripId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The ID of the trip to complete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                endTime:
+                  type: string
+                  format: date-time
+                  example: '2026-04-21T10:30:00Z'
+                endLocation:
+                  type: object
+                  properties:
+                    latitude:
+                      type: number
+                      format: float
+                      example: 34.0522
+                    longitude:
+                      type: number
+                      format: float
+                      example: -118.2437
+      responses:
+        '200':
+          description: Trip completed and scoring initiated
+        '401':
+          description: Unauthorized
+        '404':
+          description: Trip not found
+        '409':
+          description: Trip already completed
+  /trips/{tripId}/score:
+    get:
+      tags:
+        - Scoring
+      summary: Get driving score and events for a specific trip
+      description: Retrieves the detailed driving score, detected events, and coaching tips for a completed trip [1] [2].
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tripId
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The ID of the trip to retrieve the score for
+      responses:
+        '200':
+          description: Trip score and events retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TripScoreDetail'
+        '401':
+          description: Unauthorized
+        '404':
+          description: Trip or score not found
+  /me/score-summary:
+    get:
+      tags:
+        - Dashboard
+        - Scoring
+      summary: Get overall driving score summary for the user
+      description: Provides an aggregate summary of the user's driving performance, including overall score and recent trends [1] [2].
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Score summary retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OverallScoreSummary'
+        '401':
+          description: Unauthorized
+  /me/rewards:
+    get:
+      tags:
+        - Rewards
+        - Dashboard
+      summary: Get user's rewards summary
+      description: Retrieves the current points, streaks, and unlocked badges for the authenticated user [1] [2].
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Rewards summary retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RewardsSummary'
+        '401':
+          description: Unauthorized
+  /me/missions:
+    get:
+      tags:
+        - Rewards
+        - Dashboard
+      summary: Get user's active missions
+      description: Retrieves the list of active weekly missions and their progress for the authenticated user [1] [2].
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Missions retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MissionProgress'
+        '401':
+          description: Unauthorized
+  /me/savings:
+    get:
+      tags:
+        - Savings Simulator
+        - Dashboard
+      summary: Get user's current premium savings projection
+      description: Retrieves the user's current modeled premium savings tier and projected delta based on driving behavior [1] [2].
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Savings projection retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavingsProjection'
+        '401':
+          description: Unauthorized
+  /dashboard/home:
+    get:
+      tags:
+        - Dashboard
+      summary: Get aggregated data for the main dashboard view
+      description: Provides all necessary data for the mobile app's main dashboard screen in a single, optimized request [1] [2].
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Dashboard data retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardHomeData'
+        '401':
+          description: Unauthorized
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    UserProfile:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+          example: a1b2c3d4-e5f6-7890-1234-567890abcdef
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        firstName:
+          type: string
+          example: Alex
+        lastName:
+          type: string
+          example: Driver
+        overallScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 88
+        lastTripDate:
+          type: string
+          format: date-time
+          example: '2026-04-21T09:45:00Z'
+    TelemetrySample:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-04-21T10:00:05Z'
+        latitude:
+          type: number
+          format: float
+          example: 34.0522
+        longitude:
+          type: number
+          format: float
+          example: -118.2437
+        speedKmh:
+          type: number
+          format: float
+          example: 65.5
+        accelerationMps2:
+          type: number
+          format: float
+          example: 0.5
+        brakingForce:
+          type: number
+          format: float
+          example: -0.8
+        phoneUsageDetected:
+          type: boolean
+          example: false
+    TripSummary:
+      type: object
+      properties:
+        tripId:
+          type: string
+          format: uuid
+          example: f1e2d3c4-b5a6-9876-5432-10fedcba9876
+        startTime:
+          type: string
+          format: date-time
+          example: '2026-04-21T10:00:00Z'
+        endTime:
+          type: string
+          format: date-time
+          example: '2026-04-21T10:30:00Z'
+        distanceKm:
+          type: number
+          format: float
+          example: 25.3
+        durationMinutes:
+          type: integer
+          example: 30
+        tripScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 92
+        status:
+          type: string
+          enum:
+            - completed
+            - processing
+            - failed
+          example: completed
+    DrivingEvent:
+      type: object
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          example: e1d2c3b4-a5f6-7890-1234-567890abcdef
+        type:
+          type: string
+          enum:
+            - speeding
+            - hard_braking
+            - harsh_acceleration
+            - phone_distraction
+          example: hard_braking
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-04-21T10:15:30Z'
+        location:
+          type: object
+          properties:
+            latitude:
+              type: number
+              format: float
+              example: 34.0522
+            longitude:
+              type: number
+              format: float
+              example: -118.2437
+        severity:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+          example: medium
+        scoreImpact:
+          type: integer
+          example: -5
+        explanation:
+          type: string
+          example: Sudden deceleration detected. Try to anticipate stops.
+    CoachingTip:
+      type: object
+      properties:
+        tipId:
+          type: string
+          format: uuid
+          example: c1b2a3d4-e5f6-7890-1234-567890abcdef
+        message:
+          type: string
+          example: Great job maintaining a consistent speed on the highway! (+50 XP)
+        type:
+          type: string
+          enum:
+            - positive
+            - improvement
+          example: improvement
+    TripScoreDetail:
+      type: object
+      properties:
+        tripId:
+          type: string
+          format: uuid
+          example: f1e2d3c4-b5a6-9876-5432-10fedcba9876
+        overallTripScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 92
+        drivingEvents:
+          type: array
+          items:
+            $ref: '#/components/schemas/DrivingEvent'
+        coachingTips:
+          type: array
+          items:
+            $ref: '#/components/schemas/CoachingTip'
+        mapRouteImageUrl:
+          type: string
+          format: url
+          example: https://example.com/trip_map_f1e2d3c4.png
+    OverallScoreSummary:
+      type: object
+      properties:
+        overallScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 88
+        weeklyAverage:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 85
+        scoreTrend:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+                example: '2026-04-15'
+              score:
+                type: integer
+                minimum: 0
+                maximum: 100
+                example: 82
+        topRiskCategories:
+          type: array
+          items:
+            type: object
+            properties:
+              category:
+                type: string
+                example: Speeding Events
+              incidents:
+                type: integer
+                example: 2
+              attentionNeeded:
+                type: boolean
+                example: true
+    RewardsSummary:
+      type: object
+      properties:
+        totalPoints:
+          type: integer
+          example: 1250
+        currentStreakDays:
+          type: integer
+          example: 5
+        unlockedBadges:
+          type: array
+          items:
+            type: string
+            example: 'Safe Driver Badge'
+    MissionProgress:
+      type: object
+      properties:
+        missionId:
+          type: string
+          format: uuid
+          example: m1s2s3i4-o5n6-7890-1234-567890abcdef
+        title:
+          type: string
+          example: Avoid hard acceleration for 3 trips
+        progress:
+          type: string
+          example: '1/3 completed'
+        rewardPoints:
+          type: integer
+          example: 50
+        status:
+          type: string
+          enum:
+            - active
+            - completed
+            - expired
+          example: active
+    SavingsProjection:
+      type: object
+      properties:
+        currentTier:
+          type: string
+          example: 'Bronze Saver'
+        projectedAnnualSavings:
+          type: number
+          format: float
+          example: 150.00
+        disclaimer:
+          type: string
+          example: 'This is a modeled estimate, not a guarantee of actual premium reduction.'
+    DashboardHomeData:
+      type: object
+      properties:
+        userProfile:
+          $ref: '#/components/schemas/UserProfile'
+        overallScoreSummary:
+          $ref: '#/components/schemas/OverallScoreSummary'
+        recentTrip:
+          $ref: '#/components/schemas/TripSummary'
+        rewardsSummary:
+          $ref: '#/components/schemas/RewardsSummary'
+        activeMissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/MissionProgress'
+        savingsProjection:
+          $ref: '#/components/schemas/SavingsProjection'

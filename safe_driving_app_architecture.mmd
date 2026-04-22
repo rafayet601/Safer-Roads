@@ -1,0 +1,60 @@
+flowchart LR
+    subgraph DriverSide[Driver Experience]
+        A[Mobile App\nOnboarding, Trip Capture, Dashboard]
+    end
+
+    subgraph Edge[Public Edge]
+        B[API Gateway\nAuth, Routing, Rate Limits]
+    end
+
+    subgraph Services[MVP Backend Services]
+        C[User Service\nProfile, Auth Context]
+        D[Trip Ingestion Service\nTrip Sessions, Telemetry Intake, Validation]
+        E[Scoring Service\nEvent Detection, Trip Score, Coaching]
+        F[Rewards Service\nPoints, Streaks, Missions]
+        G[Pricing Service\nSavings Simulator, Rule Mappings]
+        H[Dashboard Query Service\nTrip History, Trends, Summaries]
+        I[Admin Service\nRules and Operator Controls]
+    end
+
+    subgraph Data[Data Layer]
+        J[(PostgreSQL\nUsers, Trips, Scores, Rewards, Rules)]
+        K[(Redis\nCaching, Idempotency, Rate Limits)]
+        L[(Object Storage\nTelemetry Archives, Audit Exports)]
+    end
+
+    subgraph Ops[Platform Layer]
+        M[Event Bus / Stream\nTelemetry Events, Score Events]
+        N[Observability\nLogs, Metrics, Alerts]
+    end
+
+    A --> B
+    B --> C
+    B --> D
+    B --> H
+    B --> I
+    D --> M
+    M --> E
+    E --> M
+    M --> F
+    M --> G
+    C --> J
+    D --> J
+    D --> L
+    E --> J
+    F --> J
+    G --> J
+    H --> J
+    I --> J
+    B --> K
+    D --> K
+    E --> K
+    F --> K
+    G --> K
+    C --> N
+    D --> N
+    E --> N
+    F --> N
+    G --> N
+    H --> N
+    I --> N

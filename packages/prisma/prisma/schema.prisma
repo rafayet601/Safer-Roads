@@ -1,0 +1,333 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+// User & Identity Models
+// ============================================================================
+
+model User {
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  phone                 String?   @unique
+  passwordHash          String
+  firstName             String?
+  lastName              String?
+  status                String    @default("active") // active, suspended, deleted
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  deletedAt             DateTime?
+
+  // Relations
+  consents              UserConsent[]
+  devices               Device[]
+  trips                 Trip[]
+  rewards               RewardLedger[]
+  streakState           StreakState?
+  missionProgress       UserMissionProgress[]
+  savingsState          UserSavingsState?
+  auditLogs             ConfigAuditLog[]
+
+  @@index([email])
+  @@index([status])
+  @@map("users")
+}
+
+model UserConsent {
+  id                    String    @id @default(cuid())
+  userId                String
+  consentType           String    // location, motion, analytics
+  granted               Boolean   @default(false)
+  grantedAt             DateTime?
+  version               Int       @default(1)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, consentType])
+  @@index([userId])
+  @@map("user_consents")
+}
+
+model Device {
+  id                    String    @id @default(cuid())
+  userId                String
+  deviceId              String
+  platform              String    // ios, android
+  appVersion            String
+  osVersion             String?
+  lastActiveAt          DateTime  @default(now())
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+  @@index([userId])
+  @@map("devices")
+}
+
+// ============================================================================
+// Trip & Telemetry Models
+// ============================================================================
+
+model Trip {
+  id                    String    @id @default(cuid())
+  userId                String
+  startTime             DateTime
+  endTime               DateTime?
+  status                String    @default("active") // active, completed, aborted
+  distance              Float?    // in kilometers
+  duration              Int?      // in seconds
+  correlationId         String    @unique @default(cuid())
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  telemetryBatches      TelemetryBatch[]
+  tripEvents            TripEvent[]
+  tripScore             TripScore?
+  coachingMessages      CoachingMessage[]
+  rewardLedger          RewardLedger[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("trips")
+}
+
+model TelemetryBatch {
+  id                    String    @id @default(cuid())
+  tripId                String
+  batchId               String    @unique // Client-generated to detect duplicates
+  sampleCount           Int
+  validationStatus      String    @default("valid") // valid, invalid, flagged
+  rawData               Json      // Store the raw telemetry samples
+  receivedAt            DateTime  @default(now())
+  processedAt           DateTime?
+  createdAt             DateTime  @default(now())
+
+  trip                  Trip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId])
+  @@index([validationStatus])
+  @@map("telemetry_batches")
+}
+
+// ============================================================================
+// Scoring Models
+// ============================================================================
+
+model TripScore {
+  id                    String    @id @default(cuid())
+  tripId                String    @unique
+  scoreValue            Float     // 0-100
+  scoringVersion        String    // Track which scoring rules were used
+  computedAt            DateTime  @default(now())
+  createdAt             DateTime  @default(now())
+
+  trip                  Trip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  events                TripEvent[]
+
+  @@index([tripId])
+  @@map("trip_scores")
+}
+
+model TripEvent {
+  id                    String    @id @default(cuid())
+  tripId                String
+  scoreId               String?
+  eventType             String    // speeding, harsh_braking, harsh_acceleration, phone_distraction, consistency
+  severity              String    // low, medium, high
+  timestamp             DateTime
+  impact                Float     // Points deducted
+  details               Json?     // Additional context (e.g., speed recorded, duration)
+  createdAt             DateTime  @default(now())
+
+  trip                  Trip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  score                 TripScore? @relation(fields: [scoreId], references: [id], onDelete: SetNull)
+
+  @@index([tripId])
+  @@index([scoreId])
+  @@index([eventType])
+  @@map("trip_events")
+}
+
+model CoachingMessage {
+  id                    String    @id @default(cuid())
+  tripId                String
+  messageType           String    // actionable_tip, safety_reminder, improvement_suggestion
+  messageText           String
+  relatedEventType      String?
+  createdAt             DateTime  @default(now())
+
+  trip                  Trip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId])
+  @@map("coaching_messages")
+}
+
+// ============================================================================
+// Rewards & Gamification Models
+// ============================================================================
+
+model RewardLedger {
+  id                    String    @id @default(cuid())
+  userId                String
+  tripId                String?
+  sourceType            String    // trip_completion, streak_bonus, milestone
+  pointsDelta           Int
+  transactionAt         DateTime  @default(now())
+  createdAt             DateTime  @default(now())
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trip                  Trip?     @relation(fields: [tripId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([tripId])
+  @@map("reward_ledgers")
+}
+
+model StreakState {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  currentStreak         Int       @default(0)
+  longestStreak         Int       @default(0)
+  lastTripDate          DateTime?
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("streak_states")
+}
+
+model Mission {
+  id                    String    @id @default(cuid())
+  missionType           String    // weekly_safe_trips, consistency_challenge, etc.
+  threshold             Int       // How many safe trips/etc needed
+  rewardPoints          Int       // Points awarded upon completion
+  activeWindow          String    // week, month, all_time
+  description           String
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  userProgress          UserMissionProgress[]
+
+  @@index([missionType])
+  @@map("missions")
+}
+
+model UserMissionProgress {
+  id                    String    @id @default(cuid())
+  userId                String
+  missionId             String
+  progressValue         Int       @default(0)
+  status                String    @default("in_progress") // in_progress, completed, failed
+  completedAt           DateTime?
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mission               Mission   @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, missionId])
+  @@index([userId])
+  @@index([status])
+  @@map("user_mission_progress")
+}
+
+// ============================================================================
+// Pricing & Savings Models
+// ============================================================================
+
+model PricingRule {
+  id                    String    @id @default(cuid())
+  scoreBandMin          Float
+  scoreBandMax          Float
+  savingsTier           String    // bronze, silver, gold, platinum
+  premiumReduction      Float     // Percentage (e.g., 5 for 5%)
+  effectiveFrom         DateTime  @default(now())
+  effectiveTo           DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([scoreBandMin, scoreBandMax, effectiveFrom])
+  @@index([savingsTier])
+  @@map("pricing_rules")
+}
+
+model UserSavingsState {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  currentTier           String    // bronze, silver, gold, platinum
+  projectedDelta        Float?    // Projected % savings
+  projectedSavingsAmount Float?   // In dollars
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_savings_states")
+}
+
+// ============================================================================
+// Dashboard & Aggregation Models
+// ============================================================================
+
+model DashboardDailyRollup {
+  id                    String    @id @default(cuid())
+  userId                String
+  date                  DateTime
+  tripCount             Int       @default(0)
+  avgScore              Float?
+  totalPoints           Int       @default(0)
+  eventCounts           Json?     // {"speeding": 2, "harsh_braking": 1, ...}
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([userId, date])
+  @@index([userId])
+  @@map("dashboard_daily_rollups")
+}
+
+model UserScoreSummary {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  lastScore             Float?
+  weeklyAvg             Float?
+  monthlyAvg            Float?
+  bestStreak            Int       @default(0)
+  totalTrips            Int       @default(0)
+  totalPoints           Int       @default(0)
+  updatedAt             DateTime  @updatedAt
+
+  @@map("user_score_summaries")
+}
+
+// ============================================================================
+// Admin & Audit Models
+// ============================================================================
+
+model ConfigAuditLog {
+  id                    String    @id @default(cuid())
+  actorId               String
+  configType            String    // pricing_rules, reward_rules, scoring_rules
+  changeType            String    // create, update, delete
+  changeSummary         String
+  oldValue               Json?
+  newValue               Json?
+  changedAt             DateTime  @default(now())
+
+  actor                 User      @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([configType])
+  @@map("config_audit_logs")
+}
